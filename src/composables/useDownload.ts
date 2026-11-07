@@ -9,6 +9,11 @@ import { useLevelNames } from "./useLevelNames";
 import { selectPrimaryGameFile, type GameFileInfo } from "../lib/zipExtract";
 import { GOG_EXPANSIONS } from "../lib/gogContent";
 import { useLibrary } from "./useLibrary";
+import { mirrorCandidates } from "../lib/mirrors";
+
+function isAbsolutePath(p: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\") || p.startsWith("/");
+}
 
 // Progress info for a download
 export interface DownloadProgress {
@@ -96,6 +101,19 @@ export function useDownload() {
   }
 
   /**
+   * Every file to pass with -file for an installed entry, in load order: the
+   * primary file (honouring externalPath for in-place imports), then a mod
+   * pack's extraFiles. Empty when the slug isn't installed.
+   */
+  function getLoadPaths(slug: string): string[] {
+    const info = getDownloadInfo(slug);
+    if (!info) return [];
+    const primary = info.externalPath || wadFile(info.wadFilename ?? info.filename);
+    const extras = (info.extraFiles ?? []).map(f => (isAbsolutePath(f) ? f : wadFile(f)));
+    return [primary, ...extras];
+  }
+
+  /**
    * Resolve an existing download record to a launchable path. Re-extracts
    * from a still-present zip when the extracted file went missing. Returns
    * null when there is no record or it's stale (file gone from disk).
@@ -161,27 +179,39 @@ export function useDownload() {
     try {
       await mkdir(base(), { recursive: true });
 
-      // Use tauri-plugin-upload for streaming download with progress
-      let lastUpdate = 0;
-      await tauriDownload(
-        url,
-        partPath,
-        (payload) => {
-          const now = Date.now();
-          if (now - lastUpdate > 100 || payload.progressTotal === payload.total) {
-            lastUpdate = now;
-            downloadProgress.value = { ...downloadProgress.value, [wad.slug]: { progress: payload.progressTotal, total: payload.total } };
-          }
-        },
-        DOWNLOAD_HEADERS
-      );
-
-      // Validate the downloaded file before marking as complete
-      try {
-        await validateDownload(partPath, filename);
-      } catch (validationError) {
-        await remove(partPath);
-        throw validationError;
+      // Use tauri-plugin-upload for streaming download with progress. idgames
+      // files are tried on every known mirror in turn, so one mirror being
+      // down or rate-limiting doesn't block the download.
+      const failures: string[] = [];
+      let fetched = false;
+      for (const candidate of mirrorCandidates(url)) {
+        let lastUpdate = 0;
+        try {
+          await tauriDownload(
+            candidate,
+            partPath,
+            (payload) => {
+              const now = Date.now();
+              if (now - lastUpdate > 100 || payload.progressTotal === payload.total) {
+                lastUpdate = now;
+                downloadProgress.value = { ...downloadProgress.value, [wad.slug]: { progress: payload.progressTotal, total: payload.total } };
+              }
+            },
+            DOWNLOAD_HEADERS
+          );
+          // Validate the downloaded file before marking as complete. A mirror
+          // serving an HTML error page counts as a failed mirror.
+          await validateDownload(partPath, filename);
+          fetched = true;
+          break;
+        } catch (e) {
+          console.error(`[download] ${wad.slug} failed from ${candidate}:`, e);
+          failures.push(`${new URL(candidate).host}: ${e instanceof Error ? e.message : String(e)}`);
+          if (await exists(partPath)) await remove(partPath);
+        }
+      }
+      if (!fetched) {
+        throw new Error(`Download failed for "${wad.title}" from every source:\n${failures.join("\n")}`);
       }
 
       // Atomic rename: .part -> final filename
@@ -246,6 +276,16 @@ export function useDownload() {
         console.error(`Failed to delete ${info.wadFilename}:`, e);
       }
     }
+    // Mod pack files copied into the library go too; absolute paths point at
+    // the user's own folder and are never touched.
+    for (const extra of info.extraFiles ?? []) {
+      if (isAbsolutePath(extra)) continue;
+      try {
+        await remove(wadFile(extra));
+      } catch (e) {
+        console.error(`Failed to delete ${extra}:`, e);
+      }
+    }
     delete downloads.value.downloads[slug];
     await saveState();
   }
@@ -288,7 +328,7 @@ export function useDownload() {
    */
   async function registerSyntheticDownload(
     slug: string,
-    info: { filename: string; wadFilename: string; size: number; externalPath?: string }
+    info: { filename: string; wadFilename: string; size: number; externalPath?: string; extraFiles?: string[] }
   ) {
     downloads.value.downloads[slug] = {
       filename: info.filename,
@@ -296,6 +336,7 @@ export function useDownload() {
       downloadedAt: new Date().toISOString(),
       size: info.size,
       externalPath: info.externalPath ?? "",
+      ...(info.extraFiles?.length ? { extraFiles: info.extraFiles } : {}),
     };
     await saveState();
     await loadLevelNames(slug);
@@ -308,6 +349,7 @@ export function useDownload() {
     isInstalling,
     getDownloadProgress,
     getDownloadInfo,
+    getLoadPaths,
     downloadProgress,
     downloadWad,
     downloadWithDeps,

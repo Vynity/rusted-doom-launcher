@@ -19,6 +19,10 @@ pub struct DownloadInfo {
 	pub size: u64,
 	#[serde(rename = "externalPath", skip_serializing_if = "Option::is_none", default)]
 	pub external_path: Option<String>,
+	/// Mod packs: further files loaded right after the primary one, in order.
+	/// Absolute paths, or paths relative to the library folder.
+	#[serde(rename = "extraFiles", skip_serializing_if = "Option::is_none", default)]
+	pub extra_files: Option<Vec<String>>,
 }
 
 impl LauncherDownloads {

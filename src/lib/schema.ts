@@ -79,6 +79,9 @@ export const LauncherDownloadsSchema = z.object({
     // launch directly from this absolute path and never delete it. Used
     // for custom imports where the user opted out of "Copy to library".
     externalPath: z.string().default(""),
+    // Mod packs: further files loaded right after the primary one, in order.
+    // Absolute paths, or paths relative to the library folder.
+    extraFiles: z.array(z.string()).optional(),
   })),
 });
 

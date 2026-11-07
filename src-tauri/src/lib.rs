@@ -185,6 +185,58 @@ async fn write_custom_wads(library_path: String, state: serde_json::Value) -> Re
         .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
 }
 
+/// Read {library}/presets.json (mod presets: name -> {mods, engine?}) as
+/// opaque JSON. Empty object when missing. Same file the rdl_preset.py helper
+/// script uses, so presets made there show up in the app and vice versa.
+#[tauri::command]
+async fn read_presets(library_path: String) -> Result<serde_json::Value, String> {
+    let path = std::path::PathBuf::from(library_path).join("presets.json");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s)
+            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
+        Err(e) => Err(format!("Failed to read {}: {}", path.display(), e)),
+    }
+}
+
+#[tauri::command]
+async fn write_presets(library_path: String, presets: serde_json::Value) -> Result<(), String> {
+    let path = std::path::PathBuf::from(library_path).join("presets.json");
+    let json = serde_json::to_string_pretty(&presets)
+        .map_err(|e| format!("Failed to serialize presets.json: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+#[derive(serde::Serialize)]
+struct GameFileListing {
+    name: String,
+    path: String,
+    size: u64,
+}
+
+/// List the .wad/.pk3/.pk7/.zip files directly inside a folder (not recursive),
+/// for importing a mod pack folder. Bypasses fs:scope like the other
+/// library commands since the folder is user-picked.
+#[tauri::command]
+async fn list_game_files(dir: String) -> Result<Vec<GameFileListing>, String> {
+    let entries = std::fs::read_dir(&dir).map_err(|e| format!("Failed to read {}: {}", dir, e))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry in {}: {}", dir, e))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let lower = name.to_lowercase();
+        if [".wad", ".pk3", ".pk7", ".zip"].iter().any(|ext| lower.ends_with(ext)) {
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push(GameFileListing { name, path: path.to_string_lossy().to_string(), size });
+        }
+    }
+    Ok(out)
+}
+
 // Output collector for the most recent GZDoom launch, held in Tauri managed
 // state. Mutex<Option<...>> so each launch replaces the previous session.
 struct GzdoomLog(Mutex<Option<Arc<Mutex<GZDoomSession>>>>);
@@ -517,6 +569,9 @@ pub fn run() {
             read_sibling_text,
             read_custom_wads,
             write_custom_wads,
+            read_presets,
+            write_presets,
+            list_game_files,
             validate_game_file,
             extract_game_files,
             extract_zip_entry_to_temp,

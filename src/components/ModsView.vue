@@ -7,9 +7,12 @@ import { useDownload } from "../composables/useDownload";
 import { useSettings } from "../composables/useSettings";
 import DownloadPlayButton from "./DownloadPlayButton.vue";
 import AddCustomTile from "./AddCustomTile.vue";
+import ModPresetsPanel from "./ModPresetsPanel.vue";
 
-const { wads } = defineProps<{
+const { wads, allWads } = defineProps<{
   wads: WadEntry[];
+  /** Every entry, including hidden add-ons, for load-order titles. */
+  allWads: WadEntry[];
 }>();
 
 const emit = defineEmits<{
@@ -17,6 +20,7 @@ const emit = defineEmits<{
   delete: [wad: WadEntry];
   toggleActive: [slug: string];
   addCustom: [defaultType: WadEntry["type"]];
+  addPack: [];
   edit: [wad: WadEntry];
 }>();
 
@@ -80,6 +84,8 @@ const filteredWads = computed(() => {
 
 <template>
   <div>
+    <ModPresetsPanel :all-wads="allWads" />
+
     <div v-if="wads.length === 0" class="flex flex-col items-center justify-center py-20 text-center">
       <Layers :size="48" :stroke-width="1.5" class="text-zinc-600 mb-4" />
       <p class="text-zinc-500">No gameplay mods in the catalog yet</p>
@@ -88,6 +94,10 @@ const filteredWads = computed(() => {
         class="mt-4 rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500"
         @click="emit('addCustom', 'gameplay-mod')"
       >+ Add custom mod</button>
+      <button
+        class="mt-2 rounded bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-600"
+        @click="emit('addPack')"
+      >+ Add mod pack</button>
     </div>
 
     <template v-else>
@@ -188,6 +198,11 @@ const filteredWads = computed(() => {
           v-if="!searchQuery"
           label="Add custom mod"
           @click="emit('addCustom', 'gameplay-mod')"
+        />
+        <AddCustomTile
+          v-if="!searchQuery"
+          label="Add mod pack"
+          @click="emit('addPack')"
         />
       </div>
     </template>

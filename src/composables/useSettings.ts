@@ -261,6 +261,22 @@ export function useSettings() {
     await saveSettings();
   }
 
+  /** Replace the whole active list (load order = list order), e.g. from a preset. */
+  async function setActiveMods(slugs: string[]): Promise<void> {
+    settings.value.activeMods = [...new Set(slugs)];
+    await saveSettings();
+  }
+
+  /** Move an active mod from one load-order position to another. */
+  async function moveActiveMod(from: number, to: number): Promise<void> {
+    const list = [...settings.value.activeMods];
+    if (from < 0 || from >= list.length || to < 0 || to >= list.length || from === to) return;
+    const [slug] = list.splice(from, 1);
+    list.splice(to, 0, slug);
+    settings.value.activeMods = list;
+    await saveSettings();
+  }
+
   // Caller-supplied predicate: a slug is kept only if it's still a known,
   // launchable mod. Callers should require both a matching WadEntry and a
   // present download — checking download alone leaves orphaned slugs behind.
@@ -278,6 +294,8 @@ export function useSettings() {
     setGZDoomPath,
     setLibraryPath,
     toggleActiveMod,
+    setActiveMods,
+    moveActiveMod,
     pruneActiveMods,
   };
 }

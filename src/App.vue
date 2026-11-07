@@ -10,11 +10,11 @@ import GameplayLogView from "./components/GameplayLogView.vue";
 import SettingsView from "./components/SettingsView.vue";
 import AboutView from "./components/AboutView.vue";
 import CustomModView from "./components/CustomModView.vue";
+import ModPackView from "./components/ModPackView.vue";
 import { useWads } from "./composables/useWads";
 import { useGZDoom } from "./composables/useGZDoom";
 import { useDownload } from "./composables/useDownload";
 import { useCustomWads } from "./composables/useCustomWads";
-import { useLibrary } from "./composables/useLibrary";
 import { useSettings } from "./composables/useSettings";
 import { useLevelNames } from "./composables/useLevelNames";
 import { useStats } from "./composables/useStats";
@@ -54,13 +54,12 @@ type ModType = WadEntry["type"];
 
 declare const window: Window & typeof globalThis & { __TAURI_INTERNALS__?: unknown };
 
-type View = "main" | "mods" | "explore" | "runs" | "logs" | "settings" | "about" | "addCustom";
+type View = "main" | "mods" | "explore" | "runs" | "logs" | "settings" | "about" | "addCustom" | "addPack";
 
 const { wads } = useWads();
 const { detectIwads, availableIwads, launch, isRunning } = useGZDoom();
-const lib = useLibrary();
 
-const { loadState: loadDownloadState, downloadWithDeps, downloadWad, deleteWad, isDownloaded, getDownloadInfo, registerOwnedExpansions } = useDownload();
+const { loadState: loadDownloadState, downloadWithDeps, downloadWad, deleteWad, isDownloaded, getDownloadInfo, getLoadPaths, registerOwnedExpansions } = useDownload();
 
 const iwadEntries = computed<WadEntry[]>(() => availableIwads.value.map(synthIwadEntry));
 // Entries with no download URL (official expansions sourced from GOG
@@ -165,11 +164,7 @@ function activeModPaths(launchedSlug: string): string[] {
   const knownSlugs = new Set(wads.value.map(w => w.slug));
   return settings.value.activeMods
     .filter(s => s !== launchedSlug && knownSlugs.has(s) && isDownloaded(s))
-    .map(s => {
-      const info = getDownloadInfo(s);
-      return info ? lib.wadFile(info.wadFilename ?? info.filename) : null;
-    })
-    .filter((p): p is string => !!p);
+    .flatMap(s => getLoadPaths(s));
 }
 
 async function handlePlay(wad: WadEntry, extraArgs?: string[]) {
@@ -217,7 +212,10 @@ async function handlePlay(wad: WadEntry, extraArgs?: string[]) {
       return;
     }
     const { wadPath, depPaths } = await downloadWithDeps(wad, wads.value);
-    await launch(wadPath, wad.iwad, depPaths, modPaths, wad.slug, "HMP", combinedExtra);
+    // A map pack imported as several files: its extra files load right
+    // after the main one, before any active mods.
+    const packExtras = getLoadPaths(wad.slug).slice(1);
+    await launch(wadPath, wad.iwad, depPaths, [...packExtras, ...modPaths], wad.slug, "HMP", combinedExtra);
   } catch (e) {
     console.error(`[Play] Error launching ${wad.slug}:`, e);
     errorMsg.value = getErrorMessage(e);
@@ -279,11 +277,18 @@ async function handleDelete(wad: WadEntry) {
       <ModsView
         v-else-if="activeView === 'mods'"
         :wads="modEntries"
+        :all-wads="wads"
         @play="(wad: WadEntry, args?: string[]) => handlePlay(wad, args)"
         @delete="handleDelete"
         @toggle-active="handleToggleActive"
         @add-custom="openCustomImporter"
+        @add-pack="activeView = 'addPack'"
         @edit="openCustomEditor"
+      />
+      <ModPackView
+        v-else-if="activeView === 'addPack'"
+        @cancel="activeView = 'mods'"
+        @added="activeView = 'mods'"
       />
       <CustomModView
         v-else-if="activeView === 'addCustom'"
